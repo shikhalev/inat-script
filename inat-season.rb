@@ -13,6 +13,22 @@ def hi str
   end
 end
 
+def get_yaml name
+  path = File.expand_path name
+  return path if File.exists? path
+  path = File.expand_path "#{name}.yaml"
+  return path if File.exists? path
+  path = File.expand_path "#{name}.yml"
+  return path if File.exists? path
+  raise ArgumentError::new "Could not find YAML-file with name '#{name}'"
+end
+
+def do_task task, config
+  yaml = get_yaml task
+  conf = YAML.load yaml
+  # TODO: this
+end
+
 CONFIG = {
   :yaml => nil,
   :months => {
@@ -22,6 +38,7 @@ CONFIG = {
   :source => nil,
   :neighbours => [],
   :file_output => nil,
+  :no_threads => false,
 }
 
 VERSION = '0.9a'
@@ -92,6 +109,10 @@ opts = OptionParser.new(USAGE) do |o|
     CONFIG[:file_output] = true
   end
 
+  o.on '-1', '--no-threads', 'Do not use threads.' do
+    CONFIG[:no_threads] = true
+  end
+
 end
 
 rest = opts.parse ARGV
@@ -102,4 +123,13 @@ else
   CONFIG[:yaml] = rest
 end
 
-pp CONFIG
+if CONFIG[:yaml].size > 1 && CONFIG[:file_output] && !CONFIG[:no_threads]
+  CONFIG[:yaml].each do |yaml|
+    Thread::new yaml, CONFIG.dup { |t, c| do_task(t, c) }
+  end
+  Thread::list.each(&:join)
+else
+  CONFIG[:yaml].each do |yaml|
+    do_task yaml, CONFIG.dup
+  end
+end
