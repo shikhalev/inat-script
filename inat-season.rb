@@ -31,6 +31,21 @@ module FromHash
   end
 end
 
+ICONIC_ORDER = {
+  'Aves' => 1,
+  'Amphibia' => 2,
+  'Reptilia' => 3,
+  'Mammalia' => 4,
+  'Actinopterygii' => 5,
+  'Mollusca' => 6,
+  'Arachnida' => 7,
+  'Insecta' => 8,
+  'Plantae' => 9,
+  'Fungi' => 10,
+  'Protozoa' => 11,
+  'Unknown' => 12,
+}
+
 class Observation
 
   attr_reader :quality_grade, :observed_on, :scientific_name, :common_name, :taxon_id, :user_login, :url, :id, :iconic_taxon_name
@@ -51,6 +66,7 @@ end
 class Taxon
 
   attr_reader :taxon_id, :scientific_name, :common_name, :iconic_taxon_name
+  attr_reader :iconic_taxon_order
   attr_reader :observations
 
   include FromHash
@@ -76,6 +92,7 @@ class Taxon
     else
       load src, :taxon_id, :scientific_name, :common_name, :iconic_taxon_name
     end
+    @iconic_taxon_order = ICONIC_ORDER[@iconic_taxon_name]
   end
 
   def same
@@ -117,6 +134,19 @@ class Taxon
     @observations.size
   end
 
+  def url
+    "https://www.inaturalist.org/taxa/#{@taxon_id}"
+  end
+
+  def html_title
+    base = if @common_name
+      "#{@common_name} <i>(#{@scientific_name})</i>"
+    else
+      "<i>#{@scientific_name}</i>"
+    end
+    "<a href=\"#{url}\"><i class=\"icon-iconic-#{@iconic_taxon_name.downcase}\" style=\"font-size: 1.5em;\"></i> #{base}</a>"
+  end
+
 end
 
 class List
@@ -151,7 +181,7 @@ class List
 
   def each &block
     @taxa ||= {}
-    @taxa.to_a.sort_by { |i| i[1].scientific_name }.map { |i| i[1] }.each &block
+    @taxa.to_a.map { |i| i[1] }.sort_by { |i| i.scientific_name }.each &block
   end
 
   def << item
@@ -167,7 +197,7 @@ class List
         raise ArgumentError::new "Invalid item class: #{item.class}"
       end
     else
-      @taxa[item.taxon_id] = Taxon::new item
+      @taxa[item.taxon_id] = Taxon::new item, @config
     end
   end
 
@@ -198,6 +228,104 @@ class List
       count += t.observation_count
     end
     count
+  end
+
+  def split_seasons
+    result = Seasons::new @config
+    each do |taxon|
+      taxon.each do |observation|
+        result << observation
+      end
+    end
+    result
+  end
+
+  def split_observers
+    result = Observers::new @config
+    each do |taxon|
+      taxon.each do |observation|
+        result << observation
+      end
+    end
+    result
+  end
+
+  def has_id? taxon_id
+    @taxa.member? taxon_id
+  end
+
+  def + other
+    merge other
+  end
+
+  def - other
+    result = self.same
+    each do |taxon|
+      result << taxon if !other.has_id?(taxon.taxon_id)
+    end
+    result
+  end
+
+  def html_list details: true, observers: true
+    @@unikey ||= 0
+    @@unikey += 1
+    result = []
+    result << '<table>'
+    result << '<tr>'
+    result << '<th>Таксон</th>'
+    if details
+      result << '<th>Наблюдения</th>'
+    else
+      result << '<th style="text-align: right;">Наблюдения</th>'
+    end
+    result << '</tr>'
+
+    @taxa.to_a.map { |t| t[1] }.sort_by { |t| t.scientific_name }.sort_by { |t| t.iconic_taxon_order }.each do |taxon|
+      result << '<tr>'
+      result << "<td>#{taxon.html_title}</td>"
+      if details
+        result << '<td>'
+        olist = []
+        taxon.each do |observation|
+          ulink = if observers
+            "<sup><a href=\"\##{@@unikey}-#{observation.user_login}\">@</a></sup>"
+          else
+            ''
+          end
+          olist << "<a href=\"#{observation.url}\">\##{observation.id}</a>#{ulink}"
+        end
+        result << olist.join(', ')
+      else
+        result << '<td style="text-align: right;">'
+        result << taxon.observation_count.to_s
+      end
+      result << '</td>'
+      result << '</tr>'
+    end
+
+    result << '</table>'
+
+    if details && observers
+      splitted = split_observers
+      result << ''
+      result << 'Наблюдатели:'
+      result << '<table>'
+      result << '<tr>'
+      result << '<th>Логин</th>'
+      result << '<th style="text-align: right;">Виды</th>'
+      result << '<th style="text-align: right;">Наблюдения</th>'
+      result << '</tr>'
+      splitted.each do |observer|
+        result << '<tr>'
+        result << "<td><a name=\"#{@@unikey}-#{observer.user_login}\"><i class=\"glyphicon glyphicon-user\"></i></a> @#{observer.user_login}</td>"
+        result << "<td style=\"text-align: right;\">#{observer.taxon_count}</td>"
+        result << "<td style=\"text-align: right;\">#{observer.observation_count}</td>"
+        result << '</tr>'
+      end
+      result << '</table>'
+    end
+
+    result.join("\n")
   end
 
 end
@@ -234,28 +362,125 @@ class Seasons
     @seasons = {}
   end
 
+  def [] season
+    @seasons[season]
+  end
+
   def << observation
     season_name = observation.season
-    @season[season_name] ||= Season::new @config
-    @season[season_name] << observation
+    @seasons[season_name] ||= Season::new season_name, @config
+    @seasons[season_name] << observation
+  end
+
+  def each &block
+    @seasons.to_a.map { |s| s[1] }.sort_by { |s| s.season }.each &block
+  end
+
+  def last_name
+    @seasons.to_a.map { |s| s[1].season }.sort.last
+  end
+
+  def html_history
+    result = []
+    result << "<table>"
+    result << "<tr>"
+    result << "<th>Сезон</th>"
+    result << "<th style=\"text-align: right;\">Наблюдения</th>"
+    result << "<th style=\"text-align: right;\">Виды</th>"
+    result << "<th style=\"text-align: right;\">Новые</th>"
+    result << "</tr>"
+
+    olds = List::new @config
+    each do |season|
+      name = season.season
+      observation_count = season.observation_count
+      taxon_count = season.taxon_count
+      news = season - olds
+      news_count = news.taxon_count
+      olds.merge! season if name != last_name
+      bold = 'font-weight: bold; font-size: 1.1em;' if name == last_name
+      result << "<tr>"
+      result << "<td style=\"#{bold}\"><i class=\"glyphicon glyphicon-calendar\"></i> #{name}</td>"
+      result << "<td style=\"text-align: right;#{bold}\">#{observation_count}</td>"
+      result << "<td style=\"text-align: right;#{bold}\">#{taxon_count}</td>"
+      result << "<td style=\"text-align: right;#{bold}\">#{news_count}</td>"
+      result << "</tr>"
+    end
+    @olds = olds
+    @news = news
+
+    result << "</table>"
+    result.join("\n")
+  end
+
+  def news
+    if !@news
+      season = @seasons[last_name]
+      @news = season - olds
+    end
+    @news
+  end
+
+  def olds
+    if !@olds
+      @olds = List::new @config
+      each do |season|
+        @olds.merge! season if season.season != last_name
+      end
+    end
+    @olds
   end
 
 end
 
-ICONIC_ORDER = {
-  'Aves' => 1,
-  'Amphibia' => 2,
-  'Reptilia' => 3,
-  'Mammalia' => 4,
-  'Actinopterygii' => 5,
-  'Mollusca' => 6,
-  'Arachnida' => 7,
-  'Insecta' => 8,
-  'Plantae' => 9,
-  'Fungi' => 10,
-  'Protozoa' => 11,
-  'Unknown' => 12,
-}
+class Observer < List
+
+  attr_reader :user_login
+
+  def initialize user_login, config
+    @user_login = user_login
+    super config
+  end
+
+  def << item
+    case item
+    when Taxon
+      item.each do |observation|
+        self << observation
+      end
+    when Observation
+      if item.user_login == @user_login
+        super item
+      end
+    end
+    self
+  end
+
+end
+
+class Observers
+
+  def initialize config
+    @config = config
+    @observers = {}
+  end
+
+  def [] user_login
+    @observers[user_login]
+  end
+
+  def << observation
+    user_login = observation.user_login
+    @observers[user_login] ||= Observer::new user_login, @config
+    @observers[user_login] << observation
+  end
+
+  def each &block
+    @observers.to_a.map { |o| o[1] }.sort_by { |o| o.taxon_count }.reverse.each &block
+  end
+
+end
+
 
 def do_task task, config
   yaml = get_yaml task
@@ -281,251 +506,276 @@ def do_task task, config
     end
   end
 
+  seasons = Seasons::new config
+
   csv = CSV::table(config[:source])
-
-  data = {}
-  need_ids = []
-
   csv.each do |row|
-    row_data = row.to_h.slice :quality_grade, :observed_on, :scientific_name, :common_name, :taxon_id, :user_login, :url, :id, :iconic_taxon_name
-    row_data[:iconic_taxon_order] = ICONIC_ORDER[row_data[:iconic_taxon_name]]
-    if row_data[:quality_grade] == 'research'
-      date = Date::parse row_data[:observed_on]
-      row_data[:season] = config[:get_season][date]
-      data[row_data[:season]] ||= {}
-      data[row_data[:season]][row_data[:scientific_name]] ||= []
-      data[row_data[:season]][row_data[:scientific_name]] << row_data
-    else
-      need_ids << row_data
-    end
-  end
-
-  sorted = data.to_a.sort_by { |x| x[0] }
-  last_season = sorted.last[0]
-  stats = []
-  last_news = {}
-  users_for_top = {}
-  users_for_top_last = {}
-  sorted.each do |season_row|
-    season = season_row[0]
-    season_data = season_row[1]
-    species = season_data.size
-    observations = season_data.to_a.sum { |x| x[1].size }
-    new_count = 0
-    season_data.each do |scientific_name, obsers|
-      obsers.each do |o|
-        users_for_top[o[:user_login]] ||= {}
-        users_for_top[o[:user_login]][scientific_name] ||= 0
-        users_for_top[o[:user_login]][scientific_name] += 1
-        if season == last_season
-          users_for_top_last[o[:user_login]] ||= {}
-          users_for_top_last[o[:user_login]][scientific_name] ||= 0
-          users_for_top_last[o[:user_login]][scientific_name] += 1
-        end
-      end
-      flag = true
-      data.each do |key, value|
-        next if key >= season
-        if value.has_key?(scientific_name)
-          flag = false
-          break
-        end
-      end
-      if flag
-        new_count += 1
-        if season == last_season
-          last_news[scientific_name] = season_data[scientific_name]
-        end
-      end
-    end
-    stats << {
-      season: season,
-      observations: observations,
-      species: species,
-      news: new_count
-    }
-  end
-
-  season_query = proc do |s|
-    "&d1=#{s}-01-01&d2=#{s}-12-31"
-  end
-  if config[:months] && config[:months][:first] && config[:months][:last] && config[:months][:first] > config[:months][:last]
-    season_query = proc do |s|
-      y1 = s[0..3]
-      m1 = config[:months][:first].to_s
-      m1 = '0' + m1 if m1.length == 1
-      d1 = '01'
-      y2 = (y1.to_i + 1).to_s
-      m2 = config[:months][:last].to_s
-      m2 = '0' + m2 if m2.length == 1
-      d2 = [
-        31,
-        28,
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31
-      ][config[:months][:last] - 1]
-      "&d1=#{y1}-#{m1}-#{d1}&d2=#{y2}-#{m2}-#{d2}"
+    observation = Observation::new row, config
+    if observation.quality_grade == 'research'
+      seasons << observation
     end
   end
 
   html = []
-  html << "<h2>Итоги сезона</h2>"
-  html << ""
-  html << "Здесь и далее учитываются только наблюдения исследовательского уровня, если специально не оговорено иное."
-  html << ""
-  html << "<h3>История</h3>"
-  html << ""
-  html << "<table>"
-  html << ""
-  html << "<tr>"
-  html << "<th>Сезон</th>"
-  html << "<th>Наблюдения</th>"
-  html << "<th>Виды</th>"
-  html << "<th>Новые</th>"
-  html << "</tr>"
-  html << ""
 
-  stats[..-2].each do |row|
-    observations_link = config[:search] + '&quality_grade=research' + season_query[row[:season]]
-    species_link = observations_link + '&view=species'
-    html << "<tr>"
-    html << "<td>#{row[:season]}</td>"
-    html << "<td><a href=\"#{observations_link}\">#{row[:observations]}</a></td>"
-    html << "<td><a href=\"#{species_link}\">#{row[:species]}</a></td>"
-    html << "<td>#{row[:news]}</td>"
-    html << "</tr>"
-    html << ""
-  end
-  row = stats[-1]
-  observations_link = config[:search] + '&quality_grade=research' + season_query[row[:season]]
-  species_link = observations_link + '&view=species'
-  html << "<tr>"
-  html << "<td><b>#{row[:season]}</b></td>"
-  html << "<td><a href=\"#{observations_link}\"><b>#{row[:observations]}</b></a></td>"
-  html << "<td><a href=\"#{species_link}\"><b>#{row[:species]}</b></a></td>"
-  html << "<td><b>#{row[:news]}</b></td>"
-  html << "</tr>"
-  html << ""
+  html << "<h2>Итоги сезона #{seasons.last_name}</h2>"
+  html << ''
+  html << '<h3>История</h3>'
+  html << ''
+  html << 'Здесь и далее рассматриваются только наблюдения исследовательского уровня, если отдельно и явно не оговорено иное.'
+  html << ''
+  html << seasons.html_history
+  html << ''
+  html << '<h3>Новинки</h3>'
+  html << ''
+  html << 'Таксоны, наблюдавшиеся в данном сезоне впервые.'
+  html << ''
+  html << seasons.news.html_list
 
-  html << "</table>"
 
-  news_users = {}
-  news_user_link = proc do |user|
-    num = news_users[user]
-    if num == nil
-      num = news_users.size + 1
-      news_users[user] = num
-    end
-    "<sup><a href=\"\#news-user-#{num}\">[#{num}]</a></sup>"
-  end
-  if last_news.size > 0
-    sorted_news = last_news.to_a.sort_by { |n| n[0] }.sort_by { |n| n[1][0][:iconic_taxon_order] }
-    html << ""
-    html << "<h3>Новинки</h3>"
-    html << ""
-    html << "Виды, в предыдущие сезоны не наблюдавшиеся."
-    html << ""
-    html << "<table>"
-    html << ""
-    html << "<tr>"
-    html << "<th>Вид</th>"
-    html << "<th>Наблюдения</th>"
-    html << "</tr>"
-    html << ""
+  # data = {}
+  # need_ids = []
 
-    sorted_news.each do |nn|
-      scientific_name = nn[0]
-      observations = nn[1]
-      common_name = observations[0][:common_name]
-      taxon_id = observations[0][:taxon_id]
-      iconic_class = "icon-iconic-#{observations[0][:iconic_taxon_name].downcase}"
-      html << "<tr>"
-      html << "<td><a href=\"https://www.inaturalist.org/taxa/#{taxon_id}\"><i class=\"#{iconic_class}\" style=\"font-size: 1.5em\"> </i>#{common_name} <i>(#{scientific_name})</i></a></td>"
-      html << "<td>"
-      html << observations.map { |o| "<a href=\"#{o[:url]}\">\##{o[:id]}</a>#{news_user_link[o[:user_login]]}" }.join(', ')
-      html << "</td>"
-      html << "</tr>"
-      html << ""
-    end
+  # csv.each do |row|
+  #   row_data = row.to_h.slice :quality_grade, :observed_on, :scientific_name, :common_name, :taxon_id, :user_login, :url, :id, :iconic_taxon_name
+  #   row_data[:iconic_taxon_order] = ICONIC_ORDER[row_data[:iconic_taxon_name]]
+  #   if row_data[:quality_grade] == 'research'
+  #     date = Date::parse row_data[:observed_on]
+  #     row_data[:season] = config[:get_season][date]
+  #     data[row_data[:season]] ||= {}
+  #     data[row_data[:season]][row_data[:scientific_name]] ||= []
+  #     data[row_data[:season]][row_data[:scientific_name]] << row_data
+  #   else
+  #     need_ids << row_data
+  #   end
+  # end
 
-    html << "</table>"
-    html << ""
-    html << "Новые виды наблюдали:"
-    html << "<ul>"
-    html << news_users.to_a.sort_by { |u| u[1] }.map { |u| "<li><a name=\"news-user-#{u[1]}\">[#{u[1]}]</a> @#{u[0]}</li>" }.join("\n")
-    html << "</ul>"
-  end
+  # sorted = data.to_a.sort_by { |x| x[0] }
+  # last_season = sorted.last[0]
+  # stats = []
+  # last_news = {}
+  # users_for_top = {}
+  # users_for_top_last = {}
+  # sorted.each do |season_row|
+  #   season = season_row[0]
+  #   season_data = season_row[1]
+  #   species = season_data.size
+  #   observations = season_data.to_a.sum { |x| x[1].size }
+  #   new_count = 0
+  #   season_data.each do |scientific_name, obsers|
+  #     obsers.each do |o|
+  #       users_for_top[o[:user_login]] ||= {}
+  #       users_for_top[o[:user_login]][scientific_name] ||= 0
+  #       users_for_top[o[:user_login]][scientific_name] += 1
+  #       if season == last_season
+  #         users_for_top_last[o[:user_login]] ||= {}
+  #         users_for_top_last[o[:user_login]][scientific_name] ||= 0
+  #         users_for_top_last[o[:user_login]][scientific_name] += 1
+  #       end
+  #     end
+  #     flag = true
+  #     data.each do |key, value|
+  #       next if key >= season
+  #       if value.has_key?(scientific_name)
+  #         flag = false
+  #         break
+  #       end
+  #     end
+  #     if flag
+  #       new_count += 1
+  #       if season == last_season
+  #         last_news[scientific_name] = season_data[scientific_name]
+  #       end
+  #     end
+  #   end
+  #   stats << {
+  #     season: season,
+  #     observations: observations,
+  #     species: species,
+  #     news: new_count
+  #   }
+  # end
 
-  top_users = []
-  users_for_top.each do |key, value|
-    top_users << [key, value.size, value.to_a.sum { |x| x[1] }]
-  end
-  top_users.filter! { |v| v[1] >= config[:tops][:limit] }
-  top_users.sort_by! { |v| v[1] }
-  top_users.reverse!
-  top_users_last = []
-  users_for_top_last.each do |key, value|
-    top_users_last << [key, value.size, value.to_a.sum { |x| x[1] }]
-  end
-  top_users_last.filter! { |v| v[1] >= config[:tops][:limit] }
-  top_users_last.sort_by! { |v| v[1] }
-  top_users_last.reverse!
+  # season_query = proc do |s|
+  #   "&d1=#{s}-01-01&d2=#{s}-12-31"
+  # end
+  # if config[:months] && config[:months][:first] && config[:months][:last] && config[:months][:first] > config[:months][:last]
+  #   season_query = proc do |s|
+  #     y1 = s[0..3]
+  #     m1 = config[:months][:first].to_s
+  #     m1 = '0' + m1 if m1.length == 1
+  #     d1 = '01'
+  #     y2 = (y1.to_i + 1).to_s
+  #     m2 = config[:months][:last].to_s
+  #     m2 = '0' + m2 if m2.length == 1
+  #     d2 = [
+  #       31,
+  #       28,
+  #       31,
+  #       30,
+  #       31,
+  #       30,
+  #       31,
+  #       31,
+  #       30,
+  #       31,
+  #       30,
+  #       31
+  #     ][config[:months][:last] - 1]
+  #     "&d1=#{y1}-#{m1}-#{d1}&d2=#{y2}-#{m2}-#{d2}"
+  #   end
+  # end
 
-  if top_users.size != 0
-    html << ""
-    html << "<h3>Лучшие наблюдатели</h3>"
-    html << ""
-    html << "Топ наблюдателей <i>по числу видов</i>. Показаны топ-#{config[:tops][:count]} из тех, у кого число видов не меньше #{config[:tops][:limit]}."
-    html << ""
-    html << "<h4>За все время</h4>"
-    html << ""
-    html << "<table>"
-    html << ""
-    html << "<tr>"
-    html << "<th>\#</th><th>Наблюдатель</th><th>Виды</th><th>Наблюдения</th>"
-    html << "</tr>"
-    html << ""
-    top_users[0 .. config[:tops][:count] - 1].each_with_index do |u, i|
-      html << "<tr>"
-      html << "<td>#{i + 1}</td>"
-      html << "<td>@#{u[0]}</td>"
-      html << "<td>#{u[1]}</td>"
-      html << "<td>#{u[2]}</td>"
-      html << "</tr>"
-      html << ""
-    end
-    html << "</table>"
+  # html = []
+  # html << "<h2>Итоги сезона</h2>"
+  # html << ""
+  # html << "Здесь и далее учитываются только наблюдения исследовательского уровня, если специально не оговорено иное."
+  # html << ""
+  # html << "<h3>История</h3>"
+  # html << ""
+  # html << "<table>"
+  # html << ""
+  # html << "<tr>"
+  # html << "<th>Сезон</th>"
+  # html << "<th style=\"text-align: right;\">Наблюдения</th>"
+  # html << "<th style=\"text-align: right;\">Виды</th>"
+  # html << "<th style=\"text-align: right;\">Новые</th>"
+  # html << "</tr>"
+  # html << ""
 
-    if top_users_last.size != 0
-      html << ""
-      html << "<h4>За сезон</h4>"
-      html << ""
-      html << "<table>"
-      html << ""
-      html << "<tr>"
-      html << "<th>\#</th><th>Наблюдатель</th><th>Виды</th><th>Наблюдения</th>"
-      html << "</tr>"
-      html << ""
-      top_users_last[0 .. config[:tops][:count] - 1].each_with_index do |u, i|
-        html << "<tr>"
-        html << "<td>#{i + 1}</td>"
-        html << "<td>@#{u[0]}</td>"
-        html << "<td>#{u[1]}</td>"
-        html << "<td>#{u[2]}</td>"
-        html << "</tr>"
-        html << ""
-      end
-      html << "</table>"
-    end
-  end
+  # stats[..-2].each do |row|
+  #   observations_link = config[:search] + '&quality_grade=research' + season_query[row[:season]]
+  #   species_link = observations_link + '&view=species'
+  #   html << "<tr>"
+  #   html << "<td><i class=\"glyphicon glyphicon-calendar\"> </i>#{row[:season]}</td>"
+  #   html << "<td style=\"text-align: right;\"><a href=\"#{observations_link}\">#{row[:observations]}</a></td>"
+  #   html << "<td style=\"text-align: right;\"><a href=\"#{species_link}\">#{row[:species]}</a></td>"
+  #   html << "<td style=\"text-align: right;\">#{row[:news]}</td>"
+  #   html << "</tr>"
+  #   html << ""
+  # end
+  # row = stats[-1]
+  # observations_link = config[:search] + '&quality_grade=research' + season_query[row[:season]]
+  # species_link = observations_link + '&view=species'
+  # html << "<tr>"
+  # html << "<td><b><i class=\"glyphicon glyphicon-calendar\"> </i>#{row[:season]}</b></td>"
+  # html << "<td style=\"text-align: right;\"><a href=\"#{observations_link}\"><b>#{row[:observations]}</b></a></td>"
+  # html << "<td style=\"text-align: right;\"><a href=\"#{species_link}\"><b>#{row[:species]}</b></a></td>"
+  # html << "<td style=\"text-align: right;\"><b>#{row[:news]}</b></td>"
+  # html << "</tr>"
+  # html << ""
+
+  # html << "</table>"
+
+  # news_users = {}
+  # news_user_link = proc do |user|
+  #   num = news_users[user]
+  #   if num == nil
+  #     num = news_users.size + 1
+  #     news_users[user] = num
+  #   end
+  #   "<sup><a href=\"\#news-user-#{num}\">[#{num}]</a></sup>"
+  # end
+  # if last_news.size > 0
+  #   sorted_news = last_news.to_a.sort_by { |n| n[0] }.sort_by { |n| n[1][0][:iconic_taxon_order] }
+  #   html << ""
+  #   html << "<h3>Новинки</h3>"
+  #   html << ""
+  #   html << "Виды, в предыдущие сезоны не наблюдавшиеся."
+  #   html << ""
+  #   html << "<table>"
+  #   html << ""
+  #   html << "<tr>"
+  #   html << "<th>Вид</th>"
+  #   html << "<th>Наблюдения</th>"
+  #   html << "</tr>"
+  #   html << ""
+
+  #   sorted_news.each do |nn|
+  #     scientific_name = nn[0]
+  #     observations = nn[1]
+  #     common_name = observations[0][:common_name]
+  #     taxon_id = observations[0][:taxon_id]
+  #     iconic_class = "icon-iconic-#{observations[0][:iconic_taxon_name].downcase}"
+  #     html << "<tr>"
+  #     html << "<td><a href=\"https://www.inaturalist.org/taxa/#{taxon_id}\"><i class=\"#{iconic_class}\" style=\"font-size: 1.5em\"> </i>#{common_name} <i>(#{scientific_name})</i></a></td>"
+  #     html << "<td>"
+  #     html << observations.map { |o| "<a href=\"#{o[:url]}\">\##{o[:id]}</a>#{news_user_link[o[:user_login]]}" }.join(', ')
+  #     html << "</td>"
+  #     html << "</tr>"
+  #     html << ""
+  #   end
+
+  #   html << "</table>"
+  #   html << ""
+  #   html << "Новые виды наблюдали:"
+  #   html << "<ul>"  # TODO: табличка с количеством
+  #   html << news_users.to_a.sort_by { |u| u[1] }.map { |u| "<li><a class=\"glyphicon glyphicon-user\" name=\"news-user-#{u[1]}\">[#{u[1]}]</a> @#{u[0]}</li>" }.join("\n")
+  #   html << "</ul>"
+  # end
+
+  # top_users = []
+  # users_for_top.each do |key, value|
+  #   top_users << [key, value.size, value.to_a.sum { |x| x[1] }]
+  # end
+  # top_users.filter! { |v| v[1] >= config[:tops][:limit] }
+  # top_users.sort_by! { |v| v[1] }
+  # top_users.reverse!
+  # top_users_last = []
+  # users_for_top_last.each do |key, value|
+  #   top_users_last << [key, value.size, value.to_a.sum { |x| x[1] }]
+  # end
+  # top_users_last.filter! { |v| v[1] >= config[:tops][:limit] }
+  # top_users_last.sort_by! { |v| v[1] }
+  # top_users_last.reverse!
+
+  # if top_users.size != 0
+  #   html << ""
+  #   html << "<h3>Лучшие наблюдатели</h3>"
+  #   html << ""
+  #   html << "Топ наблюдателей <i>по числу видов</i>. Показаны топ-#{config[:tops][:count]} из тех, у кого число видов не меньше #{config[:tops][:limit]}."
+  #   html << ""
+  #   html << "<h4>За все время</h4>"
+  #   html << ""
+  #   html << "<table>"
+  #   html << ""
+  #   html << "<tr>"
+  #   html << "<th>\#</th><th>Наблюдатель</th><th>Виды</th><th>Наблюдения</th>"
+  #   html << "</tr>"
+  #   html << ""
+  #   top_users[0 .. config[:tops][:count] - 1].each_with_index do |u, i|
+  #     html << "<tr>"
+  #     html << "<td>#{i + 1}</td>"
+  #     html << "<td>@#{u[0]}</td>"
+  #     html << "<td>#{u[1]}</td>"
+  #     html << "<td>#{u[2]}</td>"
+  #     html << "</tr>"
+  #     html << ""
+  #   end
+  #   html << "</table>"
+
+  #   if top_users_last.size != 0
+  #     html << ""
+  #     html << "<h4>За сезон</h4>"
+  #     html << ""
+  #     html << "<table>"
+  #     html << ""
+  #     html << "<tr>"
+  #     html << "<th>\#</th><th>Наблюдатель</th><th>Виды</th><th>Наблюдения</th>"
+  #     html << "</tr>"
+  #     html << ""
+  #     top_users_last[0 .. config[:tops][:count] - 1].each_with_index do |u, i|
+  #       html << "<tr>"
+  #       html << "<td>#{i + 1}</td>"
+  #       html << "<td>@#{u[0]}</td>"
+  #       html << "<td>#{u[1]}</td>"
+  #       html << "<td>#{u[2]}</td>"
+  #       html << "</tr>"
+  #       html << ""
+  #     end
+  #     html << "</table>"
+  #   end
+  # end
 
   #pp last_news
 
