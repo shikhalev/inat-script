@@ -305,6 +305,8 @@ class List
 
     result << '</table>'
 
+    # TODO: нумерация наблюдателей для цифры в ссылке
+
     if details && observers
       splitted = split_observers
       result << ''
