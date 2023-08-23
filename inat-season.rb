@@ -92,7 +92,7 @@ class Taxon
     else
       load src, :taxon_id, :scientific_name, :common_name, :iconic_taxon_name
     end
-    @iconic_taxon_order = ICONIC_ORDER[@iconic_taxon_name]
+    @iconic_taxon_order = ICONIC_ORDER[@iconic_taxon_name] || 20
   end
 
   def same
@@ -399,14 +399,17 @@ class Seasons
     result = []
     result << "<table>"
     result << "<tr>"
+    result << "<th style=\"text-align: right;\">#</th>"
     result << "<th>Сезон</th>"
     result << "<th style=\"text-align: right;\">Наблюдения</th>"
     result << "<th style=\"text-align: right;\">Виды</th>"
     result << "<th style=\"text-align: right;\">Новые</th>"
     result << "</tr>"
 
+    num = 0
     olds = List::new @config
     each do |season|
+      num += 1
       name = season.season
       observation_count = season.observation_count
       taxon_count = season.taxon_count
@@ -415,6 +418,7 @@ class Seasons
       olds.merge! season if name != last_name
       bold = 'font-weight: bold; font-size: 1.1em;' if name == last_name
       result << "<tr>"
+      result << "<td style=\"text-align: right;\">#{num}</td>"
       result << "<td style=\"#{bold}\"><i class=\"glyphicon glyphicon-calendar\"></i> #{name}</td>"
       result << "<td style=\"text-align: right;#{bold}\">#{observation_count}</td>"
       result << "<td style=\"text-align: right;#{bold}\">#{taxon_count}</td>"
@@ -473,6 +477,14 @@ class Seasons
 
   def last
     self[last_name]
+  end
+
+  def ones
+    result = List::new @config
+    all.each do |taxon|
+      result << taxon if taxon.observation_count == 1
+    end
+    result
   end
 
 end
@@ -580,12 +592,15 @@ def do_task task, config
   end
 
   seasons = Seasons::new config
+  needs_ids = List::new config
 
   csv = CSV::table(config[:source])
   csv.each do |row|
     observation = Observation::new row, config
     if observation.quality_grade == 'research'
       seasons << observation
+    elsif observation.quality_grade == 'needs_id'
+      needs_ids << observation
     end
   end
 
@@ -598,6 +613,17 @@ def do_task task, config
   html << 'Здесь и далее рассматриваются только наблюдения исследовательского уровня, если отдельно и явно не оговорено иное.'
   html << ''
   html << seasons.html_history
+
+  html << ''
+  html << '<h3>Лучшие наблюдатели</h3>'
+  html << ''
+  html << "Топ-#{config[:tops][:count]} наблюдателей (среди тех у кого не менее #{config[:tops][:limit]} видов)."
+  html << ''
+  last_season = seasons.last.split_observers
+  html << last_season.html_top(subtitle: 'За сезон')
+  all_time = seasons.all.split_observers
+  html << all_time.html_top(subtitle: 'За всё время')
+
   html << ''
   html << '<h3>Новинки</h3>'
   html << ''
@@ -610,19 +636,61 @@ def do_task task, config
     html << ''
     html << '<h3>«Потеряшки»</h3>'
     html << ''
-    html << "Таксоны без подтвержденных наблюдений в последние #{config[:modern]} сезона."
+    html << "Ранее найденные таксоны без подтвержденных наблюдений в последние #{config[:modern]} сезона."
     html << ''
     html << lost.html_list(observers: false)
   end
 
-  html << '<h3>Лучшие наблюдатели</h3>'
+
+  if config[:neighbours].size != 0
+    html << ''
+    html << '<h2>Сравнение с соседями</h2>'
+    html << ''
+    neighbours = List::new config
+    config[:neighbours].each do |filename|
+      ncsv = CSV::table(filename)
+      ncsv.each do |row|
+        observation = Observation::new row, config
+        if observation.quality_grade == 'research'
+          neighbours << observation
+        end
+      end
+    end
+    uniqs = seasons.all - neighbours
+    if uniqs.taxon_count != 0
+      html << '<h3>«Уники»</h3>'
+      html << ''
+      html << 'Таксоны, не обнаруженные ни у кого из соседей.'
+      html << ''
+      html << uniqs.html_list(subtitle: 'Наблюдатели уников')
+    end
+    wanted = neighbours - seasons.all
+    if wanted.taxon_count != 0
+      html << '<h3>«Разыскиваются»</h3>'
+      html << ''
+      html << 'Таксоны, обнаруженные у соседей, но (пока?) не найденные у нас.'
+      html << ''
+      html << wanted.html_list(observers: false)
+    end
+    if uniqs.taxon_count == 0 || wanted.taxon_count == 0
+      html << 'Не найдены различия с соседями.'
+    end
+    html << ''
+  end
+
+  html << '<h2>Недостаточно наблюдений</h2>'
   html << ''
-  html << "Топ-#{config[:tops][:count]} наблюдателей (среди тех у кого не менее #{config[:tops][:limit]} видов)."
+  html << 'Таксоны, находок которых мало. Желательно обратить на них дополнительное внимание.'
   html << ''
-  last_season = seasons.last.split_observers
-  html << last_season.html_top(subtitle: 'За сезон')
-  all_time = seasons.all.split_observers
-  html << all_time.html_top(subtitle: 'За всё время')
+  html << '<h3>Только одно подтвержденное наблюдение</h3>'
+  html << ''
+  html << seasons.ones.html_list(observers: false)
+  html << ''
+  html << '<h3>Только неподтвержденные наблюдения</h3>'
+  html << ''
+  needs_id_only = needs_ids - seasons.all
+  html << needs_id_only.html_list(observers: false)
+
   html << ''
   html << '<hr>'
 
