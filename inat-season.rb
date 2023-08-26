@@ -85,7 +85,7 @@ class Taxon
       @taxon_id = src.taxon_id
       @scientific_name = src.scientific_name
       @common_name = src.common_name
-      @iconic_taxon_name = src.iconic_taxon_name
+      @iconic_taxon_name = src.iconic_taxon_name || 'Unknown'
       src.observations.each do |observation|
         @observations << observation
       end
@@ -140,9 +140,9 @@ class Taxon
 
   def html_title
     base = if @common_name
-      "#{@common_name} <i>(#{@scientific_name})</i>"
+      "#{@common_name.gsub(' ', ' ')} <i>(#{@scientific_name.gsub(' ', ' ')})</i>"
     else
-      "<i>#{@scientific_name}</i>"
+      "<i>#{@scientific_name.gsub(' ', ' ')}</i>"
     end
     "<a href=\"#{url}\"><i class=\"icon-iconic-#{@iconic_taxon_name.downcase}\" style=\"font-size: 1.5em; height: 1em; line-height: 1em;\"></i> #{base}</a>"
   end
@@ -272,12 +272,12 @@ class List
     result = []
     result << '<table>'
     result << '<tr>'
-    result << '<th style="text-align: right;">#</th>'
+    result << '<th style="text-align: right; width: 3em;">#</th>'
     result << '<th>Таксон</th>'
     if details
       result << '<th>Наблюдения</th>'
     else
-      result << '<th style="text-align: right;">Наблюдения</th>'
+      result << '<th style="text-align: right; width: 5em;">Наблюдения</th>'
     end
     result << '</tr>'
 
@@ -289,20 +289,20 @@ class List
       bottom << "<h4>#{subtitle}</h4>" if subtitle
       bottom << '<table>'
       bottom << '<tr>'
-      bottom << '<th style="text-align: right;">#</th>'
+      bottom << '<th style="text-align: right; width: 3em;">#</th>'
       bottom << '<th>Логин</th>'
-      bottom << '<th style="text-align: right;">Виды</th>'
-      bottom << '<th style="text-align: right;">Наблюдения</th>'
+      bottom << '<th style="text-align: right; width: 5em;">Виды</th>'
+      bottom << '<th style="text-align: right; width: 5em;">Наблюдения</th>'
       bottom << '</tr>'
       number = 0
       splitted.each do |observer|
         bottom << '<tr>'
         number += 1
         numbers[observer.user_login] = number
-        bottom << "<td style=\"text-align: right;\">#{number}</td>"
+        bottom << "<td style=\"text-align: right; width: 3em;\">#{number}</td>"
         bottom << "<td><a name=\"#{@@unikey}-#{observer.user_login}\"><i class=\"glyphicon glyphicon-user\"></i></a> @#{observer.user_login}</td>"
-        bottom << "<td style=\"text-align: right;\">#{observer.taxon_count}</td>"
-        bottom << "<td style=\"text-align: right;\">#{observer.observation_count}</td>"
+        bottom << "<td style=\"text-align: right; width: 5em;\">#{observer.taxon_count}</td>"
+        bottom << "<td style=\"text-align: right; width: 5em;\">#{observer.observation_count}</td>"
         bottom << '</tr>'
       end
       bottom << '</table>'
@@ -312,7 +312,7 @@ class List
     @taxa.to_a.map { |t| t[1] }.sort_by { |t| t.scientific_name }.sort_by { |t| t.iconic_taxon_order }.each do |taxon|
       result << '<tr>'
       list_num += 1
-      result << "<td style=\"text-align: right;\">#{list_num}</td>"
+      result << "<td style=\"text-align: right; width: 3em;\">#{list_num}</td>"
       result << "<td>#{taxon.html_title}</td>"
       if details
         result << '<td>'
@@ -327,7 +327,7 @@ class List
         end
         result << olist.join(', ')
       else
-        result << '<td style="text-align: right;">'
+        result << '<td style="text-align: right; width: 5em;">'
         result << taxon.observation_count.to_s
       end
       result << '</td>'
@@ -399,11 +399,11 @@ class Seasons
     result = []
     result << "<table>"
     result << "<tr>"
-    result << "<th style=\"text-align: right;\">#</th>"
+    result << "<th style=\"text-align: right; width: 3em;\">#</th>"
     result << "<th>Сезон</th>"
-    result << "<th style=\"text-align: right;\">Наблюдения</th>"
-    result << "<th style=\"text-align: right;\">Виды</th>"
-    result << "<th style=\"text-align: right;\">Новые</th>"
+    result << "<th style=\"text-align: right; width: 5em;\">Наблюдения</th>"
+    result << "<th style=\"text-align: right; width: 5em;\">Виды</th>"
+    result << "<th style=\"text-align: right; width: 5em;\">Новые</th>"
     result << "</tr>"
 
     num = 0
@@ -418,11 +418,11 @@ class Seasons
       olds.merge! season if name != last_name
       bold = 'font-weight: bold; font-size: 1.1em;' if name == last_name
       result << "<tr>"
-      result << "<td style=\"text-align: right;\">#{num}</td>"
+      result << "<td style=\"text-align: right; width: 3em;\">#{num}</td>"
       result << "<td style=\"#{bold}\"><i class=\"glyphicon glyphicon-calendar\"></i> #{name}</td>"
-      result << "<td style=\"text-align: right;#{bold}\">#{observation_count}</td>"
-      result << "<td style=\"text-align: right;#{bold}\">#{taxon_count}</td>"
-      result << "<td style=\"text-align: right;#{bold}\">#{news_count}</td>"
+      result << "<td style=\"text-align: right;#{bold}; width: 5em;\">#{observation_count}</td>"
+      result << "<td style=\"text-align: right;#{bold}; width: 5em;\">#{taxon_count}</td>"
+      result << "<td style=\"text-align: right;#{bold}; width: 5em;\">#{news_count}</td>"
       result << "</tr>"
     end
     @olds = olds
@@ -543,19 +543,19 @@ class Observers
       result << ''
       result << '<table>'
       result << '<tr>'
-      result << '<th style="text-align: right;">#</th>'
+      result << '<th style="text-align: right; width: 3em;">#</th>'
       result << '<th>Наблюдатель</th>'
-      result << '<th style="text-align: right;">Виды</th>'
-      result << '<th style="text-align: right;">Наблюдения</th>'
+      result << '<th style="text-align: right; width: 5em;">Виды</th>'
+      result << '<th style="text-align: right; width: 5em;">Наблюдения</th>'
       result << '</tr>'
       num = 0
       data.each do |observer|
         num += 1
         result << '<tr>'
-        result << "<td style=\"text-align: right;\">#{num}</td>"
+        result << "<td style=\"text-align: right; width: 3em;\">#{num}</td>"
         result << "<td><i class=\"glyphicon glyphicon-user\"></i> @#{observer.user_login}</td>"
-        result << "<td style=\"text-align: right;\">#{observer.taxon_count}</td>"
-        result << "<td style=\"text-align: right;\">#{observer.observation_count}</td>"
+        result << "<td style=\"text-align: right; width: 5em;\">#{observer.taxon_count}</td>"
+        result << "<td style=\"text-align: right; width: 5em;\">#{observer.observation_count}</td>"
         result << '</tr>'
       end
       result << '</table>'
@@ -668,9 +668,14 @@ def do_task task, config
     if wanted.taxon_count != 0
       html << '<h3>«Разыскиваются»</h3>'
       html << ''
-      html << 'Таксоны, обнаруженные у соседей, но (пока?) не найденные у нас.'
-      html << ''
-      html << wanted.html_list(observers: false)
+      if wanted.taxon_count <= 500
+        html << 'Таксоны, обнаруженные у соседей, но (пока?) не найденные здесь.'
+        html << ''
+        html << wanted.html_list(observers: false)
+      else
+        html << "Здесь должен быть список таксонов, обнаруженных у соседей, но не зафиксированных здесь. " +
+                "Но поскольку их оказалось <b>#{wanted.taxon_count}</b>, такой список малочитаем и совершенно неинформативен."
+      end
     end
     if uniqs.taxon_count == 0 || wanted.taxon_count == 0
       html << 'Не найдены различия с соседями.'
