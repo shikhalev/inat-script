@@ -99,14 +99,22 @@ class Taxon
     Taxon::new taxon_id: @taxon_id, scientific_name: @scientific_name, common_name: @common_name
   end
 
+  private def merge_observations! observations
+    observations.each do |observation|
+      if !@observations.find_index { |o| o.id == observation.id }
+        @observations << observation
+      end
+    end
+    @observations.sort_by! { |o| o.id }
+  end
+
   def merge! other
     if @taxon_id != other.taxon_id
       raise ArgumentError::new "Can not merge different taxa: #{@taxon_id} != #{other.taxon_id}"
     end
     @scientific_name ||= other.scientific_name
     @common_name ||= other.common_name
-    @observations += other.observations
-    @observations.sort_by! { |o| o.date }.uniq!
+    merge_observations! other.observations
     self
   end
 
@@ -646,17 +654,23 @@ def do_task task, config
     html << ''
     html << '<h2>Сравнение с соседями</h2>'
     html << ''
-    neighbours = List::new config
+    neighbours = [] #List::new config
     config[:neighbours].each do |filename|
+      neighbour = List::new config
       ncsv = CSV::table(filename)
       ncsv.each do |row|
         observation = Observation::new row, config
         if observation.quality_grade == 'research'
-          neighbours << observation
+          neighbour << observation
         end
       end
+      neighbours << neighbour
     end
-    uniqs = seasons.all - neighbours
+    uniqs = List::new config # seasons.all - neighbours
+    uniqs.merge! seasons.all
+    neighbours.each do |neighbour|
+      uniqs -= neighbour
+    end
     if uniqs.taxon_count != 0
       html << '<h3>«Уники»</h3>'
       html << ''
@@ -664,12 +678,25 @@ def do_task task, config
       html << ''
       html << uniqs.html_list(subtitle: 'Наблюдатели уников')
     end
-    wanted = neighbours - seasons.all
+    doubles = List::new config
+    (0 .. neighbours.size - 2).each do |i|
+      n = neighbours[i]
+      n.each do |taxon|
+        (i + 1 .. neighbours.size - 1).each do |j|
+          m = neighbours[j]
+          if m.has_id?(taxon.taxon_id)
+            doubles << taxon
+            doubles << m[taxon.taxon_id]
+          end
+        end
+      end
+    end
+    wanted = doubles - seasons.all
     if wanted.taxon_count != 0
       html << '<h3>«Разыскиваются»</h3>'
       html << ''
       if wanted.taxon_count <= 500
-        html << 'Таксоны, обнаруженные у соседей, но (пока?) не найденные здесь.'
+        html << 'Таксоны, обнаруженные как минимум у двух соседей, но (пока?) не найденные здесь.'
         html << ''
         html << wanted.html_list(observers: false)
       else
