@@ -274,6 +274,14 @@ class List
     result
   end
 
+  def top number
+    result = same
+    @taxa.map { |_, t| t }.sort_by { |t| t.observation_count }.reverse.take(number).each do |taxon|
+      result << taxon
+    end
+    result
+  end
+
   def html_list details: true, observers: true, subtitle: nil
     @@unikey ||= 0
     @@unikey += 1
@@ -695,14 +703,10 @@ def do_task task, config
     if wanted.taxon_count != 0
       html << '<h3>«Разыскиваются»</h3>'
       html << ''
-      if wanted.taxon_count <= 500
-        html << 'Таксоны, обнаруженные как минимум у двух соседей, но (пока?) не найденные здесь.'
-        html << ''
-        html << wanted.html_list(observers: false)
-      else
-        html << "Здесь должен быть список таксонов, обнаруженных у соседей, но не зафиксированных здесь. " +
-                "Но поскольку их оказалось <b>#{wanted.taxon_count}</b>, такой список малочитаем и совершенно неинформативен."
-      end
+      html << 'Таксоны, обнаруженные как минимум у двух соседей, но (пока?) не найденные здесь. Топ-50 по числу наблюдений (внутри списка сортировка стандартная, а не по наблюдениям):'
+      html << ''
+      html << wanted.top(50).html_list(observers: false)
+      html << ''
     end
     if uniqs.taxon_count == 0 || wanted.taxon_count == 0
       html << 'Не найдены различия с соседями.'
