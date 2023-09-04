@@ -468,8 +468,8 @@ class Seasons
 
   def lost
     list = @seasons.to_a.map { |s| s[1] }.sort_by { |s| s.season }
-    old_list = list[0 .. -@config[:modern] - 1]
-    new_list = list[-@config[:modern] .. -1]
+    old_list = list[0 .. -@config[:modern] - 1] || []
+    new_list = list[-@config[:modern] .. -1] || []
     olds = List::new @config
     old_list.each do |season|
       olds.merge! season
